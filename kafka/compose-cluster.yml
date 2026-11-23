@@ -1,0 +1,140 @@
+name: andesstay-kafka-cluster
+
+# Clúster Kafka del caso DSY1107 (EP6): 3 nodos de Zookeeper + 3 brokers + Kafka UI.
+# Se usa Zookeeper (no KRaft) tal como pide la materia 3.1.1. Los tres brokers permiten
+# declarar los tópicos con 3 particiones y factor de replicación 3 (materia 3.3.1),
+# con min.insync.replicas=2 para que acks=all tenga sentido.
+#
+# Uso: docker compose -f kafka/compose-cluster.yml up -d
+# UI: http://localhost:8089
+# Bootstraps para los microservicios: localhost:9092,localhost:9093,localhost:9094
+
+x-kafka-common: &kafka-common
+  image: confluentinc/cp-kafka:7.6.1
+  restart: unless-stopped
+  depends_on: [zk1, zk2, zk3]
+  environment: &kafka-env
+    KAFKA_ZOOKEEPER_CONNECT: zk1:2181,zk2:2181,zk3:2181
+    KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+    KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+    # Configuración de cluster y durabilidad (materia 3.3.1).
+    KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+    KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+    KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+    KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+    KAFKA_MIN_INSYNC_REPLICAS: 2
+    KAFKA_LOG_RETENTION_HOURS: 168
+    KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 60000
+    # Los tópicos los declaran los microservicios con NewTopic (no auto-crear).
+    KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    KAFKA_LOG_DIRS: /var/lib/kafka/data
+
+services:
+  zk1:
+    image: confluentinc/cp-zookeeper:7.6.1
+    container_name: andesstay-zk1
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_SERVER_ID: 1
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_SERVERS: zk1:2888:3888;zk2:2888:3888;zk3:2888:3888
+    ports: ["2181:2181"]
+    volumes: ["zk1-data:/var/lib/zookeeper/data", "zk1-log:/var/lib/zookeeper/log"]
+
+  zk2:
+    image: confluentinc/cp-zookeeper:7.6.1
+    container_name: andesstay-zk2
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_SERVER_ID: 2
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_SERVERS: zk1:2888:3888;zk2:2888:3888;zk3:2888:3888
+    ports: ["2182:2181"]
+    volumes: ["zk2-data:/var/lib/zookeeper/data", "zk2-log:/var/lib/zookeeper/log"]
+
+  zk3:
+    image: confluentinc/cp-zookeeper:7.6.1
+    container_name: andesstay-zk3
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_SERVER_ID: 3
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_SERVERS: zk1:2888:3888;zk2:2888:3888;zk3:2888:3888
+    ports: ["2183:2181"]
+    volumes: ["zk3-data:/var/lib/zookeeper/data", "zk3-log:/var/lib/zookeeper/log"]
+
+  kafka1:
+    <<: *kafka-common
+    container_name: andesstay-kafka1
+    hostname: kafka1
+    ports: ["9092:9092"]
+    environment:
+      <<: *kafka-env
+      KAFKA_BROKER_ID: 1
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka1:29092,PLAINTEXT_HOST://localhost:9092
+    volumes: ["kafka1-data:/var/lib/kafka/data"]
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+
+  kafka2:
+    <<: *kafka-common
+    container_name: andesstay-kafka2
+    hostname: kafka2
+    ports: ["9093:9092"]
+    environment:
+      <<: *kafka-env
+      KAFKA_BROKER_ID: 2
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka2:29092,PLAINTEXT_HOST://localhost:9093
+    volumes: ["kafka2-data:/var/lib/kafka/data"]
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+
+  kafka3:
+    <<: *kafka-common
+    container_name: andesstay-kafka3
+    hostname: kafka3
+    ports: ["9094:9092"]
+    environment:
+      <<: *kafka-env
+      KAFKA_BROKER_ID: 3
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka3:29092,PLAINTEXT_HOST://localhost:9094
+    volumes: ["kafka3-data:/var/lib/kafka/data"]
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:v0.7.2
+    container_name: andesstay-kafka-ui
+    restart: unless-stopped
+    depends_on: [kafka1, kafka2, kafka3]
+    ports: ["8089:8080"]
+    environment:
+      KAFKA_CLUSTERS_0_NAME: andesstay-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka1:29092,kafka2:29092,kafka3:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zk1:2181,zk2:2181,zk3:2181
+
+volumes:
+  zk1-data:
+  zk1-log:
+  zk2-data:
+  zk2-log:
+  zk3-data:
+  zk3-log:
+  kafka1-data:
+  kafka2-data:
+  kafka3-data:
